@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package moapis.file_api;
+
+message ImageDimensions {
+    uint32 width = 1;
+    uint32 height = 2;
+    uint32 alpha = 3;
+}
+
+message NewImageRequest {
+    repeated bytes image = 1;
+    ImageDimensions dimensions = 2; 
+}
+
+message NewImageResponse {
+    repeated string link = 1;
+}
+
+service ImageService {
+    rpc NewImageResize (NewImageRequest) returns (NewImageResponse);
+    rpc NewImagePreserve (NewImageRequest) returns (NewImageResponse); 
+    rpc NewImageResizeAndPreserve (NewImageRequest) returns (NewImageResponse);
+    rpc NewImageResizeAtDimensions (NewImageRequest) returns (NewImageResponse); 
+}
