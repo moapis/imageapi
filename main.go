@@ -12,7 +12,6 @@ import (
 	"runtime/debug"
 	"strconv"
 
-	"github.com/minio/minio-go"
 	pb "github.com/moapis/imageapi/imageapi"
 	rs "github.com/moapis/imageapi/resize"
 	s3 "github.com/moapis/imageapi/s3"
@@ -34,6 +33,7 @@ const (
 
 type imageServiceServer struct {
 	pb.UnimplementedImageServiceServer
+	S3 s3.ObjectSetterGetter
 }
 
 const tmpStore = "/tmp/image_api_data"
@@ -103,10 +103,10 @@ func (is imageServiceServer) NewImageResize(ctx context.Context, images *pb.NewI
 			return &response, status.Error(codes.InvalidArgument, "Internal server error, check server logs for aditional information.")
 		}
 		key := string(rs.MakeRandomString(12))
-		s3.S3Client.PutObject(s3.DefaultBucket,
-			key,
-			buf, int64(buf.Len()),
-			minio.PutObjectOptions{ContentType: fmt.Sprintf("image/%s", s)})
+		if e := is.S3.S3Put(s3.DefaultBucket, key, buf, fmt.Sprintf("image/%s", s)); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.InvalidArgument, "Internal server error, check server logs for aditional information.")
+		}
 		response.Link = append(response.Link, fmt.Sprintf("https://%s/%s/%s", s3.S3Endpoint, s3.DefaultBucket, key))
 	}
 	if len(invalidArray) > 0 {
@@ -147,6 +147,7 @@ func listen() *grpc.Server {
 		log.Println(e.Error())
 	}
 	is := imageServiceServer{}
+	is.S3 = &s3.SetterGetter{} // Inject actual implementation.
 	s := grpc.NewServer()
 	pb.RegisterImageServiceServer(s, is)
 	go func() {

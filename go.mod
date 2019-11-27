@@ -19,5 +19,6 @@ require (
 	github.com/nilslice/jwt v1.0.0 // indirect
 	github.com/ponzu-cms/ponzu v0.11.0
 	github.com/steveyen/gtreap v0.0.0-20150807155958-0abe01ef9be2 // indirect
+	golang.org/x/image v0.0.0-20191009234506-e7c1f5e7dbb8
 	google.golang.org/grpc v1.25.1
 )

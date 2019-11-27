@@ -6,12 +6,13 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	pb "github.com/moapis/imageapi/imageapi"
-	"github.com/moapis/imageapi/s3"
+	s3 "github.com/moapis/imageapi/s3"
 	"google.golang.org/grpc"
 	fakesock "google.golang.org/grpc/test/bufconn"
 )
@@ -32,8 +33,13 @@ func startMock(mock imageServiceServer) *grpc.Server {
 	return newServer
 }
 
-func Test_imageServiceServer_NewImageResize(t *testing.T) {
-	resp, e := http.Get("https://images.unsplash.com/photo-1535498730771-e735b998cd64?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=crop&w=2134&q=80")
+var testImage1 = "https://images.unsplash.com/photo-1535498730771-e735b998cd64?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=crop&w=2134&q=80"
+var testImage2 = "https://picsum.photos/id/192/1920/1080"
+var testImage3 = "https://via.placeholder.com/1500"
+var fakeByteStringImage = []byte("fakeimage")
+
+func Test_imageServiceServer_NewImageResize_manual(t *testing.T) {
+	resp, e := http.Get(testImage1)
 	if e != nil {
 		log.Println(e.Error())
 	}
@@ -61,9 +67,7 @@ func Test_imageServiceServer_NewImageResize(t *testing.T) {
 	}
 	key := strings.Split(response.Link[0], "/")[len(response.Link)-1]
 	t.Log(response.Link)
-	if e := s3.DeleteFile(s3.S3Client, s3.DefaultBucket, key); e != nil {
-		t.Error(e.Error())
-	}
+	s3.S3Client.RemoveObject(s3.DefaultBucket, key)
 	server.Stop()
 }
 
@@ -80,8 +84,8 @@ func Test_main(t *testing.T) {
 	}
 }
 
-func TestGetValidContentTypes(t *testing.T) {
-	resp, e := http.Get("https://images.unsplash.com/photo-1535498730771-e735b998cd64?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=crop&w=2134&q=80")
+func TestGetValidContentTypes_manual(t *testing.T) {
+	resp, e := http.Get(testImage1)
 	if e != nil {
 		log.Println(e.Error())
 	}
@@ -105,5 +109,33 @@ func TestHaserr(t *testing.T) {
 	}
 	if !haserr(e[:]) {
 		t.Fail()
+	}
+}
+
+func Test_getValidContentTypes(t *testing.T) {
+	type args struct {
+		grpcImageSlice [][]byte
+	}
+	tests := []struct {
+		name  string
+		args  args
+		want  [][]byte
+		want1 []int
+	}{
+		{
+			name: "invalid",
+			args: args{grpcImageSlice: [][]byte{fakeByteStringImage}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, got1 := getValidContentTypes(tt.args.grpcImageSlice)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("getValidContentTypes() got = %v, want %v", got, tt.want)
+			}
+			if !reflect.DeepEqual(got1, tt.want1) {
+				t.Errorf("getValidContentTypes() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
 	}
 }

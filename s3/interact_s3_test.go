@@ -2,9 +2,6 @@ package s3
 
 import (
 	"fmt"
-	"io/ioutil"
-	"log"
-	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -78,106 +75,6 @@ func TestMakeBucket(t *testing.T) {
 		}
 	}
 }
-func TestPutFile(t *testing.T) {
-	SetCreds()
-	s3 := s3Init()
-	response, e := http.Get(testImage)
-	if e != nil {
-		t.Error("Fail[1]:", e.Error())
-	}
-	b, e := ioutil.ReadAll(response.Body)
-	if e != nil {
-		t.Error("Fail[2]:", e.Error())
-	}
-	fileName := string(rs.MakeRandomString(15))
-	folder := os.TempDir()
-	saveFilePath := strings.Join([]string{folder, "/", fileName, ".", testImageType}, "")
-	if e = ioutil.WriteFile(saveFilePath, b, os.ModePerm); e != nil {
-		t.Error("Fail[3]:", e.Error())
-	}
-	if e = PutFile(s3, saveFilePath, DefaultBucket, fileName, fmt.Sprintf("image/%s", testImageType)); e != nil {
-		t.Error("Fail[4]:", http.DetectContentType(b), saveFilePath, e.Error())
-	}
-	url := strings.Join([]string{"https:/", S3Endpoint, DefaultBucket, fileName}, "/")
-	response2, e := http.Get(url)
-	if e != nil {
-		t.Error("Fail[5]:", e.Error())
-	}
-	b2, e := ioutil.ReadAll(response2.Body)
-	if e != nil {
-		t.Error("Fail[6]:", e.Error())
-	}
-	imgType := http.DetectContentType(b2)
-	if imgType != fmt.Sprintf("image/%s", testImageType) {
-		t.Errorf("S3 PUT test failed at image type check: %s", imgType)
-	}
-	os.Remove(saveFilePath)
-	if e := DeleteFile(s3, DefaultBucket, S3Key); e != nil {
-		t.Error(e.Error())
-	}
-	// test fail
-	if e := PutFile(s3, "/tmp/fakepath", DefaultBucket, "fakekey39280", "image/jpg"); e == nil {
-		t.Error("Expected error at s3 putFile()")
-	} else {
-		switch e := e.(type) {
-		case minio.ErrorResponse:
-			if e.StatusCode != 404 {
-				t.Error(e.Error())
-			}
-		case *os.PathError:
-			t.Log(e.Error())
-		}
-	}
-}
-
-func TestDeleteFile(t *testing.T) {
-	// test delete error
-	SetCreds()
-	s3 := s3Init()
-	if e := DeleteFile(s3, "fakebucket328497", "fake33423243847892337248"); e == nil {
-		t.Error("Expected error from deleteFile()\n")
-	} else {
-		t.Logf("%+v", e.(minio.ErrorResponse))
-		if e.(minio.ErrorResponse).Code != "NoSuchBucket" {
-			t.Fail()
-		}
-	}
-}
-
-func TestGetFile(t *testing.T) {
-	SetCreds()
-	bucket := DefaultBucket
-	path := os.TempDir()
-	key := "get_test"
-	response, _ := http.Get(testImage)
-	b, _ := ioutil.ReadAll(response.Body)
-	filepath := path + "/" + key
-	if err := ioutil.WriteFile(filepath, b, os.ModePerm); err != nil {
-		t.Error(err.Error())
-	}
-	c := s3Init()
-	if err := PutFile(c, filepath, bucket, key, fmt.Sprintf("image/%s", testImageType)); err != nil {
-		log.Println(err.Error())
-	}
-	if err := getFile(c, bucket, key, filepath); err != nil {
-		t.Error(err.Error())
-	}
-	fl, err := os.Open(filepath)
-	if err != nil || fl == nil {
-		t.Error(err.Error())
-	}
-	falseKey := "false_key"
-	fpath := fmt.Sprintf("/tmp/%s", falseKey)
-	if err := getFile(c, bucket, falseKey, fpath); err == nil {
-		t.Error("No error when expected.")
-	} else {
-		t.Log(err.Error())
-	}
-	if e := DeleteFile(c, bucket, key); e != nil {
-		t.Error(e.Error())
-	}
-}
-
 func TestConstructURL(t *testing.T) {
 	SetCreds()
 	bkt := "fake"
@@ -189,32 +86,5 @@ func TestConstructURL(t *testing.T) {
 	tls = false
 	if !strings.Contains(constructURL(bkt), test1) {
 		t.Errorf("Expected %s but got %s", test1, constructURL(bkt))
-	}
-}
-
-func TestGenerateURL(t *testing.T) {
-	SetCreds()
-	c := s3Init()
-	path := os.TempDir()
-	key := "generate_url_test"
-	response, _ := http.Get(testImage)
-	b, _ := ioutil.ReadAll(response.Body)
-	filepath := path + "/" + key
-	if err := ioutil.WriteFile(filepath, b, os.ModePerm); err != nil {
-		t.Error(err.Error())
-	}
-	if e := PutFile(c, filepath, DefaultBucket, key, testImageType); e != nil {
-		t.Error(e.Error())
-	}
-	url, e := generateURL(c, DefaultBucket, key)
-	if e != nil {
-		log.Println(e.Error())
-	}
-	expected := fmt.Sprintf("/%s/%s", DefaultBucket, key)
-	if url.Path == "" {
-		t.FailNow()
-	} else if url.Path != expected {
-		t.Logf("Expected %s but got %s", expected, url.Path)
-		t.Fail()
 	}
 }
