@@ -14,7 +14,7 @@ import (
 
 	pb "github.com/moapis/imageapi/imageapi"
 	rs "github.com/moapis/imageapi/resize"
-	s3 "github.com/moapis/imageapi/s3"
+	"github.com/moapis/imageapi/s3"
 	"google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"

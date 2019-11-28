@@ -2,10 +2,10 @@ package s3
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log"
 	"os"
-	"strings"
 
 	minio "github.com/minio/minio-go"
 )
@@ -23,8 +23,17 @@ var S3Secret string
 // DefaultBucket - S3_DEFAULT_BUCKET
 var DefaultBucket string
 
+// Basic Minio s3 client signature.
+type s3Client interface {
+	PutObject(bucket string, key string, src io.Reader, sz int64, opts minio.PutObjectOptions) (int64, error)
+	GetObject(bucket string, key string, opts minio.GetObjectOptions) (*minio.Object, error)
+	MakeBucket(bucket string, location string) error
+	BucketExists(bucket string) (bool, error)
+	RemoveObject(bucket string, key string) error
+}
+
 // S3Client - initialized handler using env credentials.
-var S3Client *minio.Client
+var S3Client s3Client
 
 // ObjectSetterGetter - Interface that provides signature setter/getter from s3.
 type ObjectSetterGetter interface {
@@ -50,19 +59,11 @@ func init() {
 	S3Key = os.Getenv("S3_KEY")
 	S3Secret = os.Getenv("S3_SECRET")
 	DefaultBucket = os.Getenv("S3_DEFAULT_BUCKET")
-	S3Client = s3Init()
-}
-
-// For public buckets
-func constructURL(bucket string) string {
-	var url strings.Builder
-	if tls {
-		url.WriteString("https://")
-	} else {
-		url.WriteString("http://")
+	var e error
+	S3Client, e = s3Init()
+	if e != nil {
+		log.Fatal(e.Error())
 	}
-	url.WriteString(strings.Join([]string{bucket, ".", S3Endpoint}, ""))
-	return url.String()
 }
 
 func setPolicy(Client *minio.Client, bucket string) {
@@ -73,18 +74,27 @@ func setPolicy(Client *minio.Client, bucket string) {
 	}
 }
 
-func s3Init() *minio.Client {
+func s3Init() (s3Client, error) {
 	log.Println("S3:", S3Endpoint, "tls:", tls)
 	Client, e := minio.New(S3Endpoint, S3Key, S3Secret, tls)
 	if e != nil {
 		log.Printf("On S3 init encountered: %+v\n", e.(minio.ErrorResponse).Code)
+		return nil, e
 	}
-	return Client
+	return Client, e
 }
 
 // putFile - internal - Uploads object to specified bucket using specified keyname. Cleans up the file after successful PUT.
-func putFile(c *minio.Client, bucket string, keyName string, src bytes.Buffer, contentType string) error {
-	src.Len()
+func putFile(c s3Client, bucket string, keyName string, src bytes.Buffer, contentType string) error {
+	if bucket == "" {
+		return errors.New("bucket is empty string")
+	}
+	if keyName == "" {
+		return errors.New("keyName is empty string")
+	}
+	if src.Len() == 0 {
+		return errors.New("src buffer is empty")
+	}
 	_, e := c.PutObject(bucket, keyName, &src, int64(src.Len()), minio.PutObjectOptions{ContentType: contentType})
 	if e != nil {
 		return e
@@ -93,7 +103,7 @@ func putFile(c *minio.Client, bucket string, keyName string, src bytes.Buffer, c
 }
 
 // getFile - internal - Download object.
-func getFile(c *minio.Client, bucket string, keyName string) (*bytes.Buffer, error) {
+func getFile(c s3Client, bucket string, keyName string) (*bytes.Buffer, error) {
 	reader, e := c.GetObject(bucket, keyName, minio.GetObjectOptions{})
 	if e != nil {
 		return nil, e
