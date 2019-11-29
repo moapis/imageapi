@@ -15,11 +15,28 @@ message NewImageRequest {
 
 message NewImageResponse {
     repeated string link = 1;
+    repeated NewImageResponseStruct Structure = 2;
+}
+
+message RemoveImageRequest {
+    repeated string link = 1;
+}
+
+message RemoveImageResponse {
+    string status = 1;
+}
+
+message NewImageResponseStruct {
+    string originalLink = 1;
+    string resizedLink = 2;
+    uint32 originalID = 3;
+    uint32 resizedID = 4;
 }
 
 service ImageService {
     rpc NewImageResize (NewImageRequest) returns (NewImageResponse);
     rpc NewImagePreserve (NewImageRequest) returns (NewImageResponse); 
     rpc NewImageResizeAndPreserve (NewImageRequest) returns (NewImageResponse);
-    rpc NewImageResizeAtDimensions (NewImageRequest) returns (NewImageResponse); 
+    rpc NewImageResizeAtDimensions (NewImageRequest) returns (NewImageResponse);
+    rpc RemoveImage(RemoveImageRequest) returns (RemoveImageResponse);
 }

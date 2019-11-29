@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net"
@@ -11,14 +12,30 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"strconv"
+	"strings"
 
+	_ "github.com/lib/pq"
 	pb "github.com/moapis/imageapi/imageapi"
+	"github.com/moapis/imageapi/models"
 	rs "github.com/moapis/imageapi/resize"
-	"github.com/moapis/imageapi/s3"
+	s3 "github.com/moapis/imageapi/s3"
+	"github.com/volatiletech/null"
+	"github.com/volatiletech/sqlboiler/boil"
+	"github.com/volatiletech/sqlboiler/queries/qm"
 	"google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
 )
+
+var psqlConnectionURL string
+
+var db *sql.DB
+var dbuser string
+var dbpassword string
+var dbname string
+var dbhost string
+var dbport string
+var sslmode string
 
 // IMAGEAPI_PORT (env var)
 var port int
@@ -27,8 +44,10 @@ var port int
 var addr string
 
 const (
-	defaultWidth  = 800
-	defaultHeight = 600
+	defaultWidth             = 800
+	defaultHeight            = 600
+	errorStringInternal      = "Internal server error, check server logs for aditional information."
+	errorInvalidContentFound = "Invalid content type found at indexes: %+v"
 )
 
 type imageServiceServer struct {
@@ -38,7 +57,7 @@ type imageServiceServer struct {
 
 const tmpStore = "/tmp/image_api_data"
 
-var validMimeTypes = [4]string{"jpg", "jpeg", "png", "gif"}
+var validMimeTypes = [5]string{"jpg", "jpeg", "png", "gif", "bmp"}
 
 func checkMime(data []byte) bool {
 	for _, tp := range validMimeTypes {
@@ -100,34 +119,94 @@ func (is imageServiceServer) NewImageResize(ctx context.Context, images *pb.NewI
 		var s string
 		buf, s, e[1] = rs.ResizeMem(buf, defaultWidth, defaultHeight)
 		if haserr(e[:]) {
-			return &response, status.Error(codes.InvalidArgument, "Internal server error, check server logs for aditional information.")
+			return &response, status.Error(codes.Internal, errorStringInternal)
 		}
-		key := string(rs.MakeRandomString(12))
+		key := string(rs.MakeRandomString(15))
 		if e := is.S3.S3Put(s3.DefaultBucket, key, buf, fmt.Sprintf("image/%s", s)); e != nil {
 			log.Println(e.Error())
-			return &response, status.Error(codes.InvalidArgument, "Internal server error, check server logs for aditional information.")
+			return &response, status.Error(codes.Internal, errorStringInternal)
 		}
-		response.Link = append(response.Link, fmt.Sprintf("https://%s/%s/%s", s3.S3Endpoint, s3.DefaultBucket, key))
+		link := fmt.Sprintf("https://%s/%s/%s", s3.S3Endpoint, s3.DefaultBucket, key)
+		newLink := models.Image{LinkResized: null.NewString(link, true)}
+		if e := newLink.Insert(ctx, db, boil.Infer()); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		response.Link = append(response.Link, link)
+		response.Structure = append(response.Structure, &pb.NewImageResponseStruct{ResizedLink: link, ResizedID: uint32(newLink.ID)})
 	}
 	if len(invalidArray) > 0 {
-		return &response, status.Error(codes.InvalidArgument, fmt.Sprintf("Invalid content type found at indexes: %+v", invalidArray))
+		return &response, status.Error(codes.InvalidArgument, fmt.Sprintf(errorInvalidContentFound, invalidArray))
 	}
 	return &response, nil
 }
 
 //Uploads image while not attempting to alter it.
-func (is imageServiceServer) NewImagePreserve(ctx context.Context, images *pb.NewImageRequest) (response *pb.NewImageResponse, e error) {
-	return
+func (is imageServiceServer) NewImagePreserve(ctx context.Context, images *pb.NewImageRequest) (*pb.NewImageResponse, error) {
+	dataArray, invalidArray := getValidContentTypes(images.GetImage())
+	response := pb.NewImageResponse{}
+	for _, b := range dataArray {
+		buf := new(bytes.Buffer)
+		_, e := buf.Write(b)
+		if e != nil {
+			log.Println(e.Error())
+		}
+		s := http.DetectContentType(b)
+		key := string(rs.MakeRandomString(15))
+		if e := is.S3.S3Put(s3.DefaultBucket, key, buf, s); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		link := fmt.Sprintf("https://%s/%s/%s", s3.S3Endpoint, s3.DefaultBucket, key)
+		newLink := models.Image{LinkOriginal: null.NewString(link, true)}
+		if e := newLink.Insert(ctx, db, boil.Infer()); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		response.Link = append(response.Link, link)
+		response.Structure = append(response.Structure, &pb.NewImageResponseStruct{OriginalLink: link, OriginalID: uint32(newLink.ID)})
+	}
+	if len(invalidArray) > 0 {
+		return &response, status.Error(codes.InvalidArgument, fmt.Sprintf(errorInvalidContentFound, invalidArray))
+	}
+	return &response, nil
 }
 
 // Uploads image and keeps both versions of the file.
-func (is imageServiceServer) NewImageResizeAndPreserve(ctx context.Context, images *pb.NewImageRequest) (response *pb.NewImageResponse, e error) {
-	return
+func (is imageServiceServer) NewImageResizeAndPreserve(ctx context.Context, images *pb.NewImageRequest) (*pb.NewImageResponse, error) {
+
+	return nil, nil
 }
 
 // Resizes image at specified dimensions
-func (is imageServiceServer) NewImageResizeAtDimensions(ctx context.Context, images *pb.NewImageRequest) (response *pb.NewImageResponse, e error) {
-	return
+func (is imageServiceServer) NewImageResizeAtDimensions(ctx context.Context, images *pb.NewImageRequest) (*pb.NewImageResponse, error) {
+	return nil, nil
+}
+func (is imageServiceServer) RemoveImage(ctx context.Context, request *pb.RemoveImageRequest) (*pb.RemoveImageResponse, error) {
+	links := request.GetLink()
+	var e error
+	if len(links) == 0 {
+		return &pb.RemoveImageResponse{}, status.Error(codes.InvalidArgument, errorStringInternal)
+	}
+	for _, v := range links {
+		link := strings.TrimSpace(v)
+		if link == "" {
+			return &pb.RemoveImageResponse{}, status.Error(codes.InvalidArgument, errorStringInternal)
+		}
+		var n int64
+		n, e = models.Images(qm.Where("link_original=?", link), qm.Or("link_resized=?", link)).DeleteAll(ctx, db)
+		if e != nil {
+			log.Println(e.Error())
+			return &pb.RemoveImageResponse{}, status.Error(codes.Internal, errorStringInternal)
+		}
+		if n == 0 {
+			log.Println("Expected positive AffectedRows.")
+			return &pb.RemoveImageResponse{}, status.Error(codes.InvalidArgument, errorStringInternal)
+		}
+		sl := strings.Split(link, "/")
+		e = is.S3.S3Remove(s3.DefaultBucket, sl[len(sl)-1])
+	}
+	return &pb.RemoveImageResponse{Status: "OK"}, e
 }
 
 func init() {
@@ -139,12 +218,15 @@ func init() {
 		log.Println(e.Error())
 	}
 	addr = os.Getenv("IMAGEAPI_ADDR")
+	psqlConnectionURL = strings.Join([]string{"postgres://", os.Getenv("IMAGEAPI_PQ_USER"), ":", os.Getenv("IMAGEAPI_PQ_PASS"),
+		"@", os.Getenv("IMAGEAPI_PQ_HOST"), ":", os.Getenv("IMAGEAPI_PQ_PORT"), "/", os.Getenv("IMAGEAPI_PQ_DBNAME"), "?sslmode=", os.Getenv("IMAGEAPI_PQ_SSLMODE")}, "")
 }
 
 func listen() *grpc.Server {
 	listener, e := net.Listen("tcp", fmt.Sprintf("%s:%d", addr, port))
 	if e != nil {
 		log.Println(e.Error())
+		os.Exit(1)
 	}
 	is := imageServiceServer{}
 	is.S3 = &s3.SetterGetter{} // Inject actual implementation.
@@ -157,6 +239,13 @@ func listen() *grpc.Server {
 }
 
 func main() {
+	var e error
+	db, e = sql.Open("postgres", psqlConnectionURL)
+	if e != nil {
+		log.Println(e.Error())
+		os.Exit(1)
+	}
+	log.Println(psqlConnectionURL)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
 	log.Printf("Listening on %s:%d ...", addr, port)

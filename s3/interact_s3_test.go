@@ -3,11 +3,12 @@ package s3
 import (
 	"bytes"
 	"errors"
-	minio "github.com/minio/minio-go"
-	rs "github.com/moapis/imageapi/resize"
 	"io"
 	"os"
 	"testing"
+
+	minio "github.com/minio/minio-go"
+	rs "github.com/moapis/imageapi/resize"
 )
 
 type FakeS3Client struct {
@@ -22,7 +23,7 @@ func (c *FakeS3Client) PutObject(string, string, io.Reader, int64, minio.PutObje
 }
 func (c *FakeS3Client) GetObject(string, string, minio.GetObjectOptions) (*minio.Object, error) {
 	if c.WantError {
-		return new(minio.Object), errors.New("Error test")
+		return nil, errors.New("Error test")
 	}
 	return &minio.Object{}, nil
 }
@@ -213,7 +214,7 @@ func Test_S3Put(t *testing.T) {
 }
 
 // Return object cannot be faked.
-func Test_S3Get(t *testing.T) {
+func Test_S3Get_REAL(t *testing.T) {
 	SetCreds()
 	var e error
 	S3Client, e = s3Init()

@@ -1,18 +1,23 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
+	_ "github.com/lib/pq"
 	pb "github.com/moapis/imageapi/imageapi"
+	"github.com/moapis/imageapi/models"
 	s3 "github.com/moapis/imageapi/s3"
+	"github.com/volatiletech/null"
+	"github.com/volatiletech/sqlboiler/boil"
 	"google.golang.org/grpc"
 	fakesock "google.golang.org/grpc/test/bufconn"
 )
@@ -20,6 +25,27 @@ import (
 func init() {
 	port = 9000
 	addr = "localhost"
+}
+
+type FakeSetterGetter struct {
+	WantError bool
+}
+
+func (sg *FakeSetterGetter) S3Put(bucket string, key string, b *bytes.Buffer, otype string) error {
+	if sg.WantError {
+		return errors.New("Test error")
+	}
+	return nil
+}
+func (sg *FakeSetterGetter) S3Get(bucket string, key string) (*bytes.Buffer, error) {
+	if sg.WantError {
+		return nil, errors.New("Test error")
+	}
+	return &bytes.Buffer{}, nil
+}
+
+func (*FakeSetterGetter) S3Remove(bucket string, key string) error {
+	return nil
 }
 
 func startMock(mock imageServiceServer) *grpc.Server {
@@ -33,37 +59,44 @@ func startMock(mock imageServiceServer) *grpc.Server {
 	return newServer
 }
 
-var testImage1 = "https://images.unsplash.com/photo-1535498730771-e735b998cd64?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=crop&w=2134&q=80"
-var testImage2 = "https://picsum.photos/id/192/1920/1080"
-var testImage3 = "https://via.placeholder.com/1500"
 var fakeByteStringImage = []byte("fakeimage")
 
 func Test_imageServiceServer_NewImageResize_manual(t *testing.T) {
-	resp, e := http.Get(testImage1)
-	if e != nil {
-		log.Println(e.Error())
-	}
 	var b []byte
-	if b, e = ioutil.ReadAll(resp.Body); e != nil {
+	var e error
+	if b, e = ioutil.ReadFile("resize/test_images/original/original.jpeg"); e != nil {
 		log.Println(e.Error())
 	}
 	mockServer := imageServiceServer{}
+	mockServer.S3 = &FakeSetterGetter{}
+	db, e = sql.Open("postgres", psqlConnectionURL)
+	if e != nil {
+		t.Error(e.Error(), psqlConnectionURL)
+		t.FailNow()
+	}
 	server := startMock(mockServer)
-	ctx, cf := context.WithTimeout(context.Background(), time.Second*3)
-	defer cf()
+	ctx := context.TODO()
 	request := pb.NewImageRequest{}
 	request.Image = append(request.Image, b) // append test image
 	response, e := mockServer.NewImageResize(ctx, &request)
 	if e != nil {
-		t.Error(e.Error())
+		t.Error(e.Error(), psqlConnectionURL)
 		t.FailNow()
 	}
 	if response == nil {
 		t.Error("Nil response.", e)
 		t.FailNow()
 	}
-	if len(response.Link) != len(request.Image) {
-		t.Errorf("%s, %v", response.String(), e)
+	rsp, e := db.Exec("delete from images where id=$1;", response.Structure[0].GetResizedID())
+	if e != nil {
+		t.Error(e.Error())
+	}
+	n, e := rsp.RowsAffected()
+	if e != nil {
+		t.Error(e.Error())
+	}
+	if n != 1 {
+		t.Errorf("Expected clean-up rows affected %d", 1)
 	}
 	key := strings.Split(response.Link[0], "/")[len(response.Link)-1]
 	t.Log(response.Link)
@@ -71,26 +104,10 @@ func Test_imageServiceServer_NewImageResize_manual(t *testing.T) {
 	server.Stop()
 }
 
-func Test_main(t *testing.T) {
-	tests := []struct {
-		name string
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			main()
-		})
-	}
-}
-
 func TestGetValidContentTypes_manual(t *testing.T) {
-	resp, e := http.Get(testImage1)
-	if e != nil {
-		log.Println(e.Error())
-	}
 	var b []byte
-	if b, e = ioutil.ReadAll(resp.Body); e != nil {
+	var e error
+	if b, e = ioutil.ReadFile("resize/test_images/original/original.jpeg"); e != nil {
 		log.Println(e.Error())
 	}
 	result, invalid := getValidContentTypes([][]byte{b})
@@ -123,8 +140,9 @@ func Test_getValidContentTypes(t *testing.T) {
 		want1 []int
 	}{
 		{
-			name: "invalid",
-			args: args{grpcImageSlice: [][]byte{fakeByteStringImage}},
+			name:  "invalid",
+			args:  args{grpcImageSlice: [][]byte{fakeByteStringImage}},
+			want1: []int{0}, // this should report that index 0 is invalid
 		},
 	}
 	for _, tt := range tests {
@@ -135,6 +153,204 @@ func Test_getValidContentTypes(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got1, tt.want1) {
 				t.Errorf("getValidContentTypes() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
+func Test_imageServiceServer_NewImageResize(t *testing.T) {
+	type fields struct {
+		UnimplementedImageServiceServer pb.UnimplementedImageServiceServer
+		S3                              s3.ObjectSetterGetter
+	}
+	type args struct {
+		ctx    context.Context
+		images *pb.NewImageRequest
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    *pb.NewImageResponse
+		wantErr bool
+	}{
+		{
+			name:    "want error",
+			fields:  fields{S3: &FakeSetterGetter{WantError: true}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: true,
+			want:    &pb.NewImageResponse{},
+			args:    args{ctx: context.Background(), images: &pb.NewImageRequest{}},
+		},
+		{
+			name:    "want success",
+			fields:  fields{S3: &FakeSetterGetter{WantError: false}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: false,
+			want:    &pb.NewImageResponse{},
+			args:    args{ctx: context.Background(), images: &pb.NewImageRequest{}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := imageServiceServer{
+				UnimplementedImageServiceServer: tt.fields.UnimplementedImageServiceServer,
+				S3:                              tt.fields.S3,
+			}
+			got, err := is.NewImageResize(tt.args.ctx, tt.args.images)
+			if !tt.wantErr && err != nil {
+				t.Errorf("imageServiceServer.NewImageResize() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("imageServiceServer.NewImageResize() = [%v] want [%v]", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_listen(t *testing.T) {
+	tests := []struct {
+		name string
+		want *grpc.Server
+	}{
+		{name: "server start test"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := listen()
+			if got == nil {
+				t.Errorf("listen() = %v, want %v", got, tt.want)
+			}
+			got.Stop()
+		})
+	}
+}
+
+func Test_imageServiceServer_NewImagePreserve(t *testing.T) {
+	type fields struct {
+		UnimplementedImageServiceServer pb.UnimplementedImageServiceServer
+		S3                              s3.ObjectSetterGetter
+	}
+	type args struct {
+		ctx    context.Context
+		images *pb.NewImageRequest
+	}
+	b1, _ := ioutil.ReadFile("resize/test_images/original/original.jpg")
+	b1Arr := [][]byte{b1}
+	b2, _ := ioutil.ReadFile("resize/test_images/original/original.fakeext")
+	b2Arr := [][]byte{b2}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    *pb.NewImageResponse
+		wantErr bool
+	}{
+		{
+			name:    "want error",
+			fields:  fields{S3: &FakeSetterGetter{WantError: true}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: true,
+			want:    &pb.NewImageResponse{},
+			args:    args{ctx: context.Background(), images: &pb.NewImageRequest{Image: b2Arr}},
+		},
+		{
+			name:    "want success",
+			fields:  fields{S3: &FakeSetterGetter{WantError: false}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: false,
+			want:    &pb.NewImageResponse{},
+			args:    args{ctx: context.Background(), images: &pb.NewImageRequest{Image: b1Arr}},
+		},
+	}
+	var e error
+	db, e = sql.Open("postgres", psqlConnectionURL)
+	if e != nil {
+		t.Error(e.Error(), psqlConnectionURL)
+		t.FailNow()
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := imageServiceServer{
+				UnimplementedImageServiceServer: tt.fields.UnimplementedImageServiceServer,
+				S3:                              tt.fields.S3,
+			}
+			got, err := is.NewImagePreserve(tt.args.ctx, tt.args.images)
+			if err != nil && !tt.wantErr {
+				t.Errorf("imageServiceServer.NewImagePreserve() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && !strings.Contains(got.GetLink()[0], fmt.Sprintf("%s/%s", s3.S3Endpoint, s3.DefaultBucket)) {
+				t.Error("Link doesn't match.")
+				t.FailNow()
+			}
+			if !tt.wantErr {
+				rsp, e := db.Exec("delete from images where id=$1;", got.Structure[0].GetOriginalID())
+				if e != nil {
+					t.Error(e.Error())
+				}
+				n, e := rsp.RowsAffected()
+				if e != nil {
+					t.Error(e.Error())
+				}
+				if n != 1 {
+					t.Errorf("Expected clean-up rows affected %d | %+v", 1, got)
+				}
+			}
+		})
+	}
+}
+
+func Test_imageServiceServer_RemoveImage(t *testing.T) {
+	type fields struct {
+		UnimplementedImageServiceServer pb.UnimplementedImageServiceServer
+		S3                              s3.ObjectSetterGetter
+	}
+	type args struct {
+		ctx     context.Context
+		request *pb.RemoveImageRequest
+	}
+	link := "somelink"
+	var e error
+	db, e = sql.Open("postgres", psqlConnectionURL)
+	if e != nil {
+		t.Error(e.Error(), psqlConnectionURL)
+		t.FailNow()
+	}
+	m := models.Image{LinkOriginal: null.NewString(link, true)}
+	m.Insert(context.TODO(), db, boil.Infer())
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    *pb.RemoveImageResponse
+		wantErr bool
+	}{
+		{
+			name:    "want error",
+			fields:  fields{S3: &FakeSetterGetter{WantError: true}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: true,
+			want:    &pb.RemoveImageResponse{},
+			args:    args{ctx: context.Background(), request: &pb.RemoveImageRequest{Link: []string{"    ", "fakelink"}}},
+		},
+		{
+			name:    "success",
+			fields:  fields{S3: &FakeSetterGetter{WantError: false}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: false,
+			want:    &pb.RemoveImageResponse{Status: "OK"},
+			args:    args{ctx: context.Background(), request: &pb.RemoveImageRequest{Link: []string{link}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := imageServiceServer{
+				UnimplementedImageServiceServer: tt.fields.UnimplementedImageServiceServer,
+				S3:                              tt.fields.S3,
+			}
+			got, err := is.RemoveImage(tt.args.ctx, tt.args.request)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("imageServiceServer.RemoveImage() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("imageServiceServer.RemoveImage() = %v, want %v", got, tt.want)
 			}
 		})
 	}

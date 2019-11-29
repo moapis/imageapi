@@ -39,6 +39,7 @@ var S3Client s3Client
 type ObjectSetterGetter interface {
 	S3Put(bucket string, key string, b *bytes.Buffer, otype string) error
 	S3Get(bucket string, key string) (*bytes.Buffer, error)
+	S3Remove(bucket string, key string) error
 }
 
 // SetterGetter - implements ObjectSetterGetter using Minio S3 Client.
@@ -52,6 +53,11 @@ func (*SetterGetter) S3Put(bucket string, key string, b *bytes.Buffer, otype str
 // S3Get - Get Object from S3
 func (*SetterGetter) S3Get(bucket string, key string) (*bytes.Buffer, error) {
 	return getFile(S3Client, bucket, key)
+}
+
+// S3Remove - Remove single object from S3
+func (*SetterGetter) S3Remove(bucket string, key string) error {
+	return S3Client.RemoveObject(bucket, key)
 }
 
 func init() {
