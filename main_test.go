@@ -355,3 +355,138 @@ func Test_imageServiceServer_RemoveImage(t *testing.T) {
 		})
 	}
 }
+
+func Test_imageServiceServer_NewImageResizeAndPreserve(t *testing.T) {
+	type fields struct {
+		UnimplementedImageServiceServer pb.UnimplementedImageServiceServer
+		S3                              s3.ObjectSetterGetter
+	}
+	b1, _ := ioutil.ReadFile("resize/test_images/original/original.jpg")
+	b1Arr := [][]byte{b1}
+	b2, _ := ioutil.ReadFile("resize/test_images/original/original.fakeext")
+	b2Arr := [][]byte{b2}
+	var e error
+	db, e = sql.Open("postgres", psqlConnectionURL)
+	if e != nil {
+		t.Error(e.Error(), psqlConnectionURL)
+		t.FailNow()
+	}
+	type args struct {
+		ctx    context.Context
+		images *pb.NewImageRequest
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+	}{
+		{
+			name:    "want success",
+			fields:  fields{S3: &FakeSetterGetter{WantError: false}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: false,
+			args:    args{ctx: context.Background(), images: &pb.NewImageRequest{Image: b1Arr}},
+		},
+		{
+			name:    "want error",
+			fields:  fields{S3: &FakeSetterGetter{WantError: true}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: true,
+			args:    args{ctx: context.Background(), images: &pb.NewImageRequest{Image: b2Arr}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := imageServiceServer{
+				UnimplementedImageServiceServer: tt.fields.UnimplementedImageServiceServer,
+				S3:                              tt.fields.S3,
+			}
+			got, err := is.NewImageResizeAndPreserve(tt.args.ctx, tt.args.images)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("imageServiceServer.NewImageResizeAndPreserve() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			response := got.GetStructure()
+			if !tt.wantErr && len(response) > 0 && (!strings.Contains(response[0].GetOriginalLink(), s3.DefaultBucket) || !strings.Contains(response[0].GetResizedLink(), s3.DefaultBucket)) {
+				t.Errorf("Expected valid links received %+v", got)
+			}
+			if !tt.wantErr && response == nil {
+				t.Errorf("Expected valid links received %+v", got)
+			}
+			if !tt.wantErr { // clean inserts
+				rt, e := db.Exec("delete from images where id=$1;", response[0].GetOriginalID())
+				if e != nil {
+					t.Error(e.Error())
+				}
+				ra, _ := rt.RowsAffected()
+				if ra != 1 {
+					t.Errorf("Expected db insert clean-up RowsAffected %d got %d", 1, ra)
+				}
+			}
+		})
+	}
+}
+
+func Test_imageServiceServer_NewImageResizeAtDimensions(t *testing.T) {
+	type fields struct {
+		UnimplementedImageServiceServer pb.UnimplementedImageServiceServer
+		S3                              s3.ObjectSetterGetter
+	}
+	b1, _ := ioutil.ReadFile("resize/test_images/original/original.jpg")
+	b1Arr := [][]byte{b1}
+	b2, _ := ioutil.ReadFile("resize/test_images/original/original.fakeext")
+	b2Arr := [][]byte{b2}
+	var e error
+	db, e = sql.Open("postgres", psqlConnectionURL)
+	if e != nil {
+		t.Error(e.Error(), psqlConnectionURL)
+		t.FailNow()
+	}
+	type args struct {
+		ctx    context.Context
+		images *pb.NewImageRequest
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+	}{
+		{
+			name:    "want s3 error",
+			fields:  fields{S3: &FakeSetterGetter{WantError: true}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: true,
+			args:    args{ctx: context.Background(), images: &pb.NewImageRequest{Image: b1Arr, Dimensions: &pb.ImageDimensions{Width: 300, Height: 300}}},
+		},
+		{
+			name:    "want success",
+			fields:  fields{S3: &FakeSetterGetter{WantError: false}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: false,
+			args:    args{ctx: context.Background(), images: &pb.NewImageRequest{Image: b1Arr, Dimensions: &pb.ImageDimensions{Width: 300, Height: 300}}},
+		},
+		{
+			name:    "invalid dimensions",
+			fields:  fields{S3: &FakeSetterGetter{WantError: false}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: true,
+			args:    args{ctx: context.Background(), images: &pb.NewImageRequest{Image: b1Arr}},
+		},
+		{
+			name:    "want error not image",
+			fields:  fields{S3: &FakeSetterGetter{WantError: true}, UnimplementedImageServiceServer: pb.UnimplementedImageServiceServer{}},
+			wantErr: true,
+			args:    args{ctx: context.Background(), images: &pb.NewImageRequest{Image: b2Arr, Dimensions: &pb.ImageDimensions{Width: 300, Height: 300}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := imageServiceServer{
+				UnimplementedImageServiceServer: tt.fields.UnimplementedImageServiceServer,
+				S3:                              tt.fields.S3,
+			}
+			_, err := is.NewImageResizeAtDimensions(tt.args.ctx, tt.args.images)
+			if (err == nil) && tt.wantErr {
+				t.Errorf("imageServiceServer.NewImageResizeAtDimensions() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+		})
+	}
+}

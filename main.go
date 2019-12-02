@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -44,10 +45,11 @@ var port int
 var addr string
 
 const (
-	defaultWidth             = 800
-	defaultHeight            = 600
-	errorStringInternal      = "Internal server error, check server logs for aditional information."
-	errorInvalidContentFound = "Invalid content type found at indexes: %+v"
+	defaultWidth                 = 800
+	defaultHeight                = 600
+	errorStringInternal          = "Internal server error, check server logs for aditional information."
+	errorInvalidContentFound     = "Invalid content type found at indexes: %+v"
+	invalidDimensionsErrorString = "Invalid resize dimensions supplied."
 )
 
 type imageServiceServer struct {
@@ -65,6 +67,7 @@ func checkMime(data []byte) bool {
 			return true
 		}
 	}
+	log.Printf("Detected type: [%s]\n", http.DetectContentType(data))
 	return false
 }
 
@@ -174,13 +177,84 @@ func (is imageServiceServer) NewImagePreserve(ctx context.Context, images *pb.Ne
 
 // Uploads image and keeps both versions of the file.
 func (is imageServiceServer) NewImageResizeAndPreserve(ctx context.Context, images *pb.NewImageRequest) (*pb.NewImageResponse, error) {
-
-	return nil, nil
+	dataArray, invalidArray := getValidContentTypes(images.GetImage())
+	response := pb.NewImageResponse{}
+	for _, b := range dataArray {
+		bufOriginal := new(bytes.Buffer)
+		bufResized := new(bytes.Buffer)
+		if _, e := bufOriginal.Write(b); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		io.Copy(bufResized, bufOriginal)
+		bufResized, s, e := rs.ResizeMem(bufResized, defaultWidth, defaultHeight)
+		if e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		keyo := string(rs.MakeRandomString(15))
+		keyr := fmt.Sprintf("%s_resized", keyo)
+		if e = is.S3.S3Put(s3.DefaultBucket, keyo, bufOriginal, s); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		linko := fmt.Sprintf("https://%s/%s/%s", s3.S3Endpoint, s3.DefaultBucket, keyo)
+		if e = is.S3.S3Put(s3.DefaultBucket, keyr, bufResized, s); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		linkr := fmt.Sprintf("https://%s/%s/%s", s3.S3Endpoint, s3.DefaultBucket, keyr)
+		newRow := models.Image{LinkOriginal: null.NewString(linko, true), LinkResized: null.NewString(linkr, true)}
+		if e = newRow.Insert(ctx, db, boil.Infer()); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		response.Structure = append(response.Structure,
+			&pb.NewImageResponseStruct{OriginalLink: linko, ResizedLink: linkr, OriginalID: uint32(newRow.ID), ResizedID: uint32(newRow.ID)})
+	}
+	if len(invalidArray) > 0 {
+		return &response, status.Error(codes.InvalidArgument, fmt.Sprintf(errorInvalidContentFound, invalidArray))
+	}
+	return &response, nil
 }
 
 // Resizes image at specified dimensions
 func (is imageServiceServer) NewImageResizeAtDimensions(ctx context.Context, images *pb.NewImageRequest) (*pb.NewImageResponse, error) {
-	return nil, nil
+	dataArray, invalidArray := getValidContentTypes(images.GetImage())
+	response := pb.NewImageResponse{}
+	dimensions := images.GetDimensions()
+	w := dimensions.GetHeight()
+	h := dimensions.GetWidth()
+	if w == 0 || h == 0 {
+		log.Println("Invalid image dimensions.")
+		return &response, status.Error(codes.InvalidArgument, invalidDimensionsErrorString)
+	}
+	for _, b := range dataArray {
+		buf := new(bytes.Buffer)
+		_, e := buf.Write(b)
+		if e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		var s string
+		buf, s, e = rs.ResizeMem(buf, int(w), int(h))
+		if e := is.S3.S3Put(s3.DefaultBucket, s3.DefaultBucket, buf, s); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		key := rs.MakeRandomString(15)
+		link := fmt.Sprintf("https://%s/%s/%s", s3.S3Endpoint, s3.DefaultBucket, key)
+		mdl := models.Image{LinkResized: null.NewString(link, true)}
+		if e = mdl.Insert(ctx, db, boil.Infer()); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		response.Structure = append(response.Structure, &pb.NewImageResponseStruct{ResizedLink: link, ResizedID: uint32(mdl.ID)})
+	}
+	if len(invalidArray) > 0 {
+		return &response, status.Error(codes.InvalidArgument, fmt.Sprintf(errorInvalidContentFound, invalidArray))
+	}
+	return &response, nil
 }
 func (is imageServiceServer) RemoveImage(ctx context.Context, request *pb.RemoveImageRequest) (*pb.RemoveImageResponse, error) {
 	links := request.GetLink()
@@ -204,9 +278,12 @@ func (is imageServiceServer) RemoveImage(ctx context.Context, request *pb.Remove
 			return &pb.RemoveImageResponse{}, status.Error(codes.InvalidArgument, errorStringInternal)
 		}
 		sl := strings.Split(link, "/")
-		e = is.S3.S3Remove(s3.DefaultBucket, sl[len(sl)-1])
+		if e = is.S3.S3Remove(s3.DefaultBucket, sl[len(sl)-1]); e != nil {
+			log.Println(e.Error())
+			return &pb.RemoveImageResponse{}, status.Error(codes.Internal, errorStringInternal)
+		}
 	}
-	return &pb.RemoveImageResponse{Status: "OK"}, e
+	return &pb.RemoveImageResponse{Status: "OK"}, nil
 }
 
 func init() {
