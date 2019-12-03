@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -45,8 +44,8 @@ var port int
 var addr string
 
 const (
-	defaultWidth                 = 800
-	defaultHeight                = 600
+	defaultWidth                 = 500
+	defaultHeight                = 350
 	errorStringInternal          = "Internal server error, check server logs for aditional information."
 	errorInvalidContentFound     = "Invalid content type found at indexes: %+v"
 	invalidDimensionsErrorString = "Invalid resize dimensions supplied."
@@ -120,7 +119,7 @@ func (is imageServiceServer) NewImageResize(ctx context.Context, images *pb.NewI
 		var e [2]error
 		_, e[0] = buf.Write(b)
 		var s string
-		buf, s, e[1] = rs.ResizeMem(buf, defaultWidth, defaultHeight)
+		s, e[1] = rs.ResizeMem(buf, defaultWidth, defaultHeight)
 		if haserr(e[:]) {
 			return &response, status.Error(codes.Internal, errorStringInternal)
 		}
@@ -186,8 +185,11 @@ func (is imageServiceServer) NewImageResizeAndPreserve(ctx context.Context, imag
 			log.Println(e.Error())
 			return &response, status.Error(codes.Internal, errorStringInternal)
 		}
-		io.Copy(bufResized, bufOriginal)
-		bufResized, s, e := rs.ResizeMem(bufResized, defaultWidth, defaultHeight)
+		if _, e := bufResized.Write(b); e != nil {
+			log.Println(e.Error())
+			return &response, status.Error(codes.Internal, errorStringInternal)
+		}
+		s, e := rs.ResizeMem(bufResized, defaultWidth, defaultHeight)
 		if e != nil {
 			log.Println(e.Error())
 			return &response, status.Error(codes.Internal, errorStringInternal)
@@ -237,7 +239,7 @@ func (is imageServiceServer) NewImageResizeAtDimensions(ctx context.Context, ima
 			return &response, status.Error(codes.Internal, errorStringInternal)
 		}
 		var s string
-		buf, s, e = rs.ResizeMem(buf, int(w), int(h))
+		s, e = rs.ResizeMem(buf, int(w), int(h))
 		if e := is.S3.S3Put(s3.DefaultBucket, s3.DefaultBucket, buf, s); e != nil {
 			log.Println(e.Error())
 			return &response, status.Error(codes.Internal, errorStringInternal)

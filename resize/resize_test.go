@@ -73,23 +73,23 @@ func TestResizeMem(t *testing.T) {
 				t.Error(e.Error())
 				t.FailNow()
 			}
-			bufResult, s, e := ResizeMem(buf, 800, 600)
+			s, e := ResizeMem(buf, 800, 600)
 			if e != nil && !v.ShouldFail {
 				t.Errorf("%T | %s", e, e.Error())
 			} else if v.ShouldFail {
 				t.Log(e.Error())
 				t.Skip("ShouldFail:", v.ShouldFail)
 			}
-			if bufResult == nil || s != strings.Split(ct, "/")[1] {
+			if buf == nil || s != strings.Split(ct, "/")[1] {
 				t.Error("result buf nil or mime missmatch")
 				t.FailNow()
 			}
-			rb, e := ioutil.ReadAll(bufResult)
+			rb, e := ioutil.ReadAll(buf)
 			if e != nil {
 				t.Error(e.Error())
 				t.FailNow()
 			}
-			if http.DetectContentType(rb) != "png" && !v.ShouldFail {
+			if http.DetectContentType(rb) != ct && !v.ShouldFail {
 				t.Error("Content type missmatch.")
 				t.FailNow()
 			}

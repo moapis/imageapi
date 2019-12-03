@@ -6,7 +6,6 @@ import (
 	gif "image/gif"
 	jpeg "image/jpeg"
 	png "image/png"
-	"io"
 	"log"
 	"math/rand"
 	"time"
@@ -47,23 +46,30 @@ func Resize(imagePath string, w, h int) error {
 // ResizeMem - resize without writing to disk.
 // warning: jpg becomes jpeg when this is used.
 // defaults to png
-func ResizeMem(r io.Reader, w, h int) (*bytes.Buffer, string, error) {
+func ResizeMem(r *bytes.Buffer, w, h int) (string, error) {
 	img, s, e := image.Decode(r)
 	if e != nil {
-		return nil, "", e
+		return "", e
 	}
+	rect := img.Bounds()
+	r.Reset()
 	log.Printf("Decoded type [%s]", s)
-	transform.Resize(img, w, h, transform.Linear)
-	buf := new(bytes.Buffer)
+	oh := float64(rect.Dy())
+	ow := float64(rect.Dx())
+	var ar float64
+	ar = ow / oh
+	nh := float64(w) / ar
+	imgc := transform.Resize(img, w, int(nh), transform.Linear)
+	log.Printf("New resize: [w %d - h %d]", w, int(nh))
 	switch s {
 	case "png":
-		e = png.Encode(buf, img)
+		e = png.Encode(r, imgc)
 	case "jpeg":
-		e = jpeg.Encode(buf, img, &jpeg.Options{Quality: 100})
+		e = jpeg.Encode(r, imgc, &jpeg.Options{Quality: 100})
 	case "gif":
-		e = gif.Encode(buf, img, nil)
+		e = gif.Encode(r, imgc, nil)
 	case "bmp":
-		e = bmp.Encode(buf, img)
+		e = bmp.Encode(r, imgc)
 	}
-	return buf, s, e
+	return s, e
 }
