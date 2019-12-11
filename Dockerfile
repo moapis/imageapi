@@ -1,4 +1,4 @@
-FROM golang:latest as b
+FROM golang:1.13 as b
 RUN mkdir app
 WORKDIR /app
 COPY . .
@@ -22,6 +22,7 @@ ENV IMAGEAPI_PQ_USER=postgres
 ENV IMAGEAPI_PQ_PASS=mysecretpassword
 ENV IMAGEAPI_PQ_DBNAME=imageapi
 ENV IMAGEAPI_PQ_SSLMODE=disable
+ENV AUTHENTICATOR_HOSTNAME=api0.usrp.ro:8765
 RUN apt-get update 
 RUN apt-get install -y ca-certificates
 

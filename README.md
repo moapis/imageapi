@@ -22,6 +22,7 @@ Below env vars default to minio if not set.
 - IMAGEAPI_PQ_DBNAME
 - IMAGEAPI_PQ_SSLMODE
 
-##### api
+#### api
 - IMAGEAPI_ADDR
 - IMAGEAPI_PORT
+- AUTHENTICATOR_HOSTNAME

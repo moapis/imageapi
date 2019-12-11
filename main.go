@@ -15,6 +15,10 @@ import (
 	"strings"
 
 	_ "github.com/lib/pq"
+	authenticator "github.com/moapis/authenticator/pb"
+	"github.com/moapis/authenticator/verify"
+	"github.com/pascaldekloe/jwt"
+
 	pb "github.com/moapis/imageapi/imageapi"
 	"github.com/moapis/imageapi/models"
 	rs "github.com/moapis/imageapi/resize"
@@ -36,6 +40,7 @@ var dbname string
 var dbhost string
 var dbport string
 var sslmode string
+var authServer = ""
 
 // IMAGEAPI_PORT (env var)
 var port int
@@ -51,9 +56,12 @@ const (
 	invalidDimensionsErrorString = "Invalid resize dimensions supplied."
 )
 
+var clientTokenChecker verify.Verificator
+
 type imageServiceServer struct {
 	pb.UnimplementedImageServiceServer
-	S3 s3.ObjectSetterGetter
+	S3             s3.ObjectSetterGetter
+	ccTokenChecker *grpc.ClientConn
 }
 
 const tmpStore = "/tmp/image_api_data"
@@ -277,7 +285,7 @@ func (is imageServiceServer) RemoveImage(ctx context.Context, request *pb.Remove
 		}
 		if n == 0 {
 			log.Println("Expected positive AffectedRows.")
-			return &pb.RemoveImageResponse{}, status.Error(codes.InvalidArgument, errorStringInternal)
+			return &pb.RemoveImageResponse{}, status.Error(codes.Internal, errorStringInternal)
 		}
 		sl := strings.Split(link, "/")
 		if e = is.S3.S3Remove(s3.DefaultBucket, sl[len(sl)-1]); e != nil {
@@ -297,8 +305,49 @@ func init() {
 		log.Println(e.Error())
 	}
 	addr = os.Getenv("IMAGEAPI_ADDR")
+	authServer = os.Getenv("AUTHENTICATOR_HOSTNAME")
 	psqlConnectionURL = strings.Join([]string{"postgres://", os.Getenv("IMAGEAPI_PQ_USER"), ":", os.Getenv("IMAGEAPI_PQ_PASS"),
 		"@", os.Getenv("IMAGEAPI_PQ_HOST"), ":", os.Getenv("IMAGEAPI_PQ_PORT"), "/", os.Getenv("IMAGEAPI_PQ_DBNAME"), "?sslmode=", os.Getenv("IMAGEAPI_PQ_SSLMODE")}, "")
+}
+
+func (is *imageServiceServer) getClientListener(remote string) error {
+	var e error
+	is.ccTokenChecker, e = grpc.Dial(remote, grpc.WithInsecure())
+	return e
+}
+func (is *imageServiceServer) tokenCheckClientInit() {
+	a := authenticator.NewAuthenticatorClient(is.ccTokenChecker)
+	clientTokenChecker = verify.Verificator{Client: a}
+}
+
+func isNewImageRq(rq interface{}) (*pb.NewImageRequest, bool) {
+	r, ok := rq.(*pb.NewImageRequest)
+	return r, ok
+}
+func isRemoveImageRq(rq interface{}) (*pb.RemoveImageRequest, bool) {
+	r, ok := rq.(*pb.RemoveImageRequest)
+	return r, ok
+}
+func verifyTkn(ctx context.Context, tkn string) (*jwt.Claims, error) {
+	jwtClaims, e := clientTokenChecker.Token(ctx, tkn)
+	if e != nil {
+		return nil, e
+	}
+	return jwtClaims, nil
+}
+
+// Applicable for all gRPC service methods.
+func (is *imageServiceServer) tokenCheckInterceptor(ctx context.Context, rq interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	var jwtc *jwt.Claims
+	var e error
+	if request, ok := isNewImageRq(rq); ok {
+		jwtc, e = verifyTkn(ctx, request.GetTkn())
+	}
+	if request, ok := isRemoveImageRq(rq); ok {
+		jwtc, e = verifyTkn(ctx, request.GetTkn())
+	}
+	log.Printf("Method: [%s]\n Issued: [%s] Subject: [%s]  \nerror: [%v]\n", info.FullMethod, jwtc.Issued.String(), jwtc.Subject, e)
+	return handler(ctx, rq)
 }
 
 func listen() *grpc.Server {
@@ -309,7 +358,13 @@ func listen() *grpc.Server {
 	}
 	is := imageServiceServer{}
 	is.S3 = &s3.SetterGetter{} // Inject actual implementation.
-	s := grpc.NewServer()
+	e = is.getClientListener(authServer)
+	if e != nil {
+		log.Println(e.Error())
+		os.Exit(1)
+	}
+	is.tokenCheckClientInit()
+	s := grpc.NewServer(grpc.UnaryInterceptor(is.tokenCheckInterceptor))
 	pb.RegisterImageServiceServer(s, is)
 	go func() {
 		s.Serve(listener)

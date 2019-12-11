@@ -11,6 +11,7 @@ message ImageDimensions {
 message NewImageRequest {
     repeated bytes image = 1;
     ImageDimensions dimensions = 2; 
+    string tkn = 3;
 }
 
 message NewImageResponse {
@@ -20,6 +21,7 @@ message NewImageResponse {
 
 message RemoveImageRequest {
     repeated string link = 1;
+    string tkn = 2;
 }
 
 message RemoveImageResponse {

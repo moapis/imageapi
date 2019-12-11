@@ -23,7 +23,7 @@ import (
 )
 
 func init() {
-	port = 9000
+	port = 19000
 	addr = "localhost"
 }
 
@@ -486,6 +486,74 @@ func Test_imageServiceServer_NewImageResizeAtDimensions(t *testing.T) {
 			if (err == nil) && tt.wantErr {
 				t.Errorf("imageServiceServer.NewImageResizeAtDimensions() error = %v, wantErr %v", err, tt.wantErr)
 				return
+			}
+		})
+	}
+}
+
+func Test_isNewImageRq(t *testing.T) {
+	type args struct {
+		rq interface{}
+	}
+	tests := []struct {
+		name  string
+		args  args
+		want  *pb.NewImageRequest
+		want1 bool
+	}{
+		{name: "isNewImageRq #1",
+			args:  args{rq: &pb.NewImageRequest{Tkn: "..."}},
+			want:  &pb.NewImageRequest{Tkn: "..."},
+			want1: true,
+		},
+		{name: "isNewImageRq #2",
+			args:  args{rq: &pb.RemoveImageRequest{}},
+			want:  nil,
+			want1: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, got1 := isNewImageRq(tt.args.rq)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("isNewImageRq() got = %v, want %v", got, tt.want)
+			}
+			if got1 != tt.want1 {
+				t.Errorf("isNewImageRq() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
+func Test_isRemoveImageRq(t *testing.T) {
+	type args struct {
+		rq interface{}
+	}
+	tests := []struct {
+		name  string
+		args  args
+		want  *pb.RemoveImageRequest
+		want1 bool
+	}{
+		{name: "isNewImageRq #1",
+			args:  args{rq: &pb.NewImageRequest{Tkn: "..."}},
+			want:  nil,
+			want1: false,
+		},
+		{name: "isNewImageRq #2",
+			args:  args{rq: &pb.RemoveImageRequest{Tkn: "..."}},
+			want:  &pb.RemoveImageRequest{Tkn: "..."},
+			want1: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, got1 := isRemoveImageRq(tt.args.rq)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("isRemoveImageRq() got = %v, want %v", got, tt.want)
+			}
+			if got1 != tt.want1 {
+				t.Errorf("isRemoveImageRq() got1 = %v, want %v", got1, tt.want1)
 			}
 		})
 	}
