@@ -19,6 +19,7 @@ import (
 	"github.com/volatiletech/null"
 	"github.com/volatiletech/sqlboiler/boil"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/status"
 	fakesock "google.golang.org/grpc/test/bufconn"
 )
 
@@ -554,6 +555,72 @@ func Test_isRemoveImageRq(t *testing.T) {
 			}
 			if got1 != tt.want1 {
 				t.Errorf("isRemoveImageRq() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
+func Test_imageServiceServer_tokenCheckInterceptor(t *testing.T) {
+	type fields struct {
+		UnimplementedImageServiceServer pb.UnimplementedImageServiceServer
+		ccTokenChecker                  *grpc.ClientConn
+	}
+	type args struct {
+		ctx     context.Context
+		rq      interface{}
+		info    *grpc.UnaryServerInfo
+		handler grpc.UnaryHandler
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+	}{
+		{
+			name:    "",
+			wantErr: true,
+			fields: fields{
+				ccTokenChecker: new(grpc.ClientConn),
+			},
+			args: args{
+				ctx:  context.TODO(),
+				rq:   &pb.NewImageRequest{},
+				info: &grpc.UnaryServerInfo{},
+				handler: func(ctx context.Context, rq interface{}) (interface{}, error) {
+					return nil, nil
+				},
+			},
+		},
+		{
+			name:    "",
+			wantErr: true,
+			fields: fields{
+				ccTokenChecker: new(grpc.ClientConn),
+			},
+			args: args{
+				ctx:  context.TODO(),
+				rq:   &pb.RemoveImageRequest{},
+				info: &grpc.UnaryServerInfo{},
+				handler: func(ctx context.Context, rq interface{}) (interface{}, error) {
+					return nil, nil
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := &imageServiceServer{
+				UnimplementedImageServiceServer: tt.fields.UnimplementedImageServiceServer,
+				ccTokenChecker:                  tt.fields.ccTokenChecker,
+			}
+			_, err := is.tokenCheckInterceptor(tt.args.ctx, tt.args.rq, tt.args.info, tt.args.handler)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("imageServiceServer.tokenCheckInterceptor() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if status.Code(err) != 7 {
+				t.Errorf("%T, %v", err, err)
 			}
 		})
 	}

@@ -53,6 +53,7 @@ const (
 	defaultHeight                = 350
 	errorStringInternal          = "Internal server error, check server logs for aditional information."
 	errorInvalidContentFound     = "Invalid content type found at indexes: %+v"
+	errorPermissionDenied        = "Token validation failed."
 	invalidDimensionsErrorString = "Invalid resize dimensions supplied."
 )
 
@@ -346,7 +347,12 @@ func (is *imageServiceServer) tokenCheckInterceptor(ctx context.Context, rq inte
 	if request, ok := isRemoveImageRq(rq); ok {
 		jwtc, e = verifyTkn(ctx, request.GetTkn())
 	}
-	log.Printf("Method: [%s]\n Issued: [%s] Subject: [%s]  \nerror: [%v]\n", info.FullMethod, jwtc.Issued.String(), jwtc.Subject, e)
+	if (info != nil) && (jwtc != nil) {
+		log.Printf("Method: [%s]\n Issued: [%s] Subject: [%s]  \nerror: [%v]\n", info.FullMethod, jwtc.Issued.String(), jwtc.Subject, e)
+	}
+	if e != nil {
+		return nil, status.Error(codes.PermissionDenied, errorPermissionDenied)
+	}
 	return handler(ctx, rq)
 }
 
