@@ -249,12 +249,12 @@ func (is imageServiceServer) NewImageResizeAtDimensions(ctx context.Context, ima
 		}
 		var s string
 		s, e = rs.ResizeMem(buf, int(w), int(h))
-		if e := is.S3.S3Put(s3.DefaultBucket, s3.DefaultBucket, buf, s); e != nil {
+		key := rs.MakeRandomString(15)
+		if e := is.S3.S3Put(s3.DefaultBucket, string(key), buf, s); e != nil {
 			log.Println(e.Error())
 			return &response, status.Error(codes.Internal, errorStringInternal)
 		}
-		key := rs.MakeRandomString(15)
-		link := fmt.Sprintf("https://%s/%s/%s", s3.S3Endpoint, s3.DefaultBucket, key)
+		link := fmt.Sprintf("https://%s/%s/%s", s3.S3Endpoint, s3.DefaultBucket, string(key))
 		mdl := models.Image{LinkResized: null.NewString(link, true)}
 		if e = mdl.Insert(ctx, db, boil.Infer()); e != nil {
 			log.Println(e.Error())
