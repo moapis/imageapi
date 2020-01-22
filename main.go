@@ -67,11 +67,11 @@ type imageServiceServer struct {
 
 const tmpStore = "/tmp/image_api_data"
 
-var validMimeTypes = [5]string{"jpg", "jpeg", "png", "gif", "bmp"}
+var validMimeTypes = [6]string{"image/jpg", "image/jpeg", "image/png", "image/gif", "image/bmp", "video/mp4"}
 
 func checkMime(data []byte) bool {
 	for _, tp := range validMimeTypes {
-		if fmt.Sprintf("image/%s", tp) == http.DetectContentType(data) {
+		if tp == http.DetectContentType(data) {
 			return true
 		}
 	}
@@ -286,7 +286,7 @@ func (is imageServiceServer) RemoveImage(ctx context.Context, request *pb.Remove
 		}
 		if n == 0 {
 			log.Println("Expected positive AffectedRows.")
-			return &pb.RemoveImageResponse{}, status.Error(codes.Internal, errorStringInternal)
+			//return &pb.RemoveImageResponse{}, status.Error(codes.Internal, errorStringInternal)
 		}
 		sl := strings.Split(link, "/")
 		if e = is.S3.S3Remove(s3.DefaultBucket, sl[len(sl)-1]); e != nil {
@@ -370,7 +370,7 @@ func listen() *grpc.Server {
 		os.Exit(1)
 	}
 	is.tokenCheckClientInit()
-	s := grpc.NewServer(grpc.UnaryInterceptor(is.tokenCheckInterceptor))
+	s := grpc.NewServer(grpc.UnaryInterceptor(is.tokenCheckInterceptor), grpc.MaxRecvMsgSize(1000000*100))
 	pb.RegisterImageServiceServer(s, is)
 	go func() {
 		s.Serve(listener)
