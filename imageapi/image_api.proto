@@ -53,4 +53,5 @@ service ImageService {
     rpc NewImageResizeAndPreserve (NewImageRequest) returns (NewImageResponse);
     rpc NewImageResizeAtDimensions (NewImageRequest) returns (NewImageResponse);
     rpc RemoveImage(RemoveImageRequest) returns (RemoveImageResponse);
+    rpc Overlay(OverlayRequest) returns (OverlayResponse);
 }
