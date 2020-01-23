@@ -297,6 +297,46 @@ func (is imageServiceServer) RemoveImage(ctx context.Context, request *pb.Remove
 	return &pb.RemoveImageResponse{Status: "OK"}, nil
 }
 
+func (is imageServiceServer) Overlay(ctx context.Context, request *pb.OverlayRequest) (*pb.OverlayResponse, error) {
+	response := &pb.OverlayResponse{}
+	b, arr := getValidContentTypes([][]byte{request.GetOverlayImage(), request.GetBackgroundImage()})
+	if len(arr) != 0 {
+		log.Println("Invalid content")
+		return response, status.Error(codes.InvalidArgument, errorStringInternal)
+	}
+	bOverlay := new(bytes.Buffer)
+	if _, e := bOverlay.Write(b[0]); e != nil {
+		log.Println(e.Error())
+		return response, status.Error(codes.InvalidArgument, errorStringInternal)
+	}
+	bImage := new(bytes.Buffer)
+	if _, e := bImage.Write(b[1]); e != nil {
+		log.Println(e.Error())
+		return response, status.Error(codes.InvalidArgument, errorStringInternal)
+	}
+	s, e := rs.Overlay(bOverlay, bImage, request.GetPosition(), int(request.GetResizeX()), int(request.GetResizeY()))
+	if e != nil {
+		log.Println(e.Error())
+		return response, status.Error(codes.Internal, errorStringInternal)
+	}
+	key := rs.MakeRandomString(15)
+	if e := is.S3.S3Put(s3.DefaultBucket, string(key), bImage, s); e != nil {
+		log.Println(e.Error())
+		return response, status.Error(codes.Internal, errorStringInternal)
+	}
+	link := fmt.Sprintf("https://%s/%s/%s", s3.S3Endpoint, s3.DefaultBucket, string(key))
+	mdl := models.Image{LinkOriginal: null.NewString(link, true)}
+	if db == nil {
+		return response, status.Error(codes.Internal, errorStringInternal)
+	}
+	if e = mdl.Insert(ctx, db, boil.Infer()); e != nil {
+		log.Println(e.Error())
+		return response, status.Error(codes.Internal, errorStringInternal)
+	}
+	response.Link = link
+	return response, nil
+}
+
 func init() {
 	info, _ := debug.ReadBuildInfo()
 	log.Printf("%+v", info.Main.Path)

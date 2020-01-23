@@ -625,3 +625,58 @@ func Test_imageServiceServer_tokenCheckInterceptor(t *testing.T) {
 		})
 	}
 }
+
+func Test_imageServiceServer_Overlay(t *testing.T) {
+	var e error
+	db, e = sql.Open("postgres", psqlConnectionURL)
+	if e != nil {
+		t.Error(e.Error(), psqlConnectionURL)
+		t.FailNow()
+	}
+	bOver, _ := ioutil.ReadFile("resize/test_images/original/original.jpg")
+	bUnder, _ := ioutil.ReadFile("resize/test_images/original/original.bmp")
+	rq := &pb.OverlayRequest{OverlayImage: bOver, BackgroundImage: bUnder, Position: "center", ResizeX: 300, ResizeY: 300, Tkn: "faketoken"}
+	type fields struct {
+		UnimplementedImageServiceServer pb.UnimplementedImageServiceServer
+		S3                              s3.ObjectSetterGetter
+	}
+	type args struct {
+		ctx     context.Context
+		request *pb.OverlayRequest
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+	}{
+		{
+			"test #1", fields{pb.UnimplementedImageServiceServer{}, &FakeSetterGetter{}},
+			args{context.TODO(), rq}, false},
+		{
+			"test #2", fields{pb.UnimplementedImageServiceServer{}, &FakeSetterGetter{}},
+			args{context.TODO(), rq}, true},
+		{
+			name: "test #3", fields: fields{pb.UnimplementedImageServiceServer{}, &FakeSetterGetter{}},
+			args: args{context.TODO(), new(pb.OverlayRequest)}, wantErr: true},
+	}
+	for k, tt := range tests {
+		if k == 1 {
+			db = nil
+		}
+		t.Run(tt.name, func(t *testing.T) {
+			is := imageServiceServer{
+				UnimplementedImageServiceServer: tt.fields.UnimplementedImageServiceServer,
+				S3:                              tt.fields.S3,
+			}
+			rsp, err := is.Overlay(tt.args.ctx, tt.args.request)
+			if !tt.wantErr && err != nil {
+				t.Errorf("imageServiceServer.Overlay() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && rsp.GetLink() == "" {
+				t.Fail()
+			}
+		})
+	}
+}

@@ -34,6 +34,18 @@ message NewImageResponseStruct {
     uint32 originalID = 3;
     uint32 resizedID = 4;
 }
+message OverlayRequest {
+    bytes overlayImage = 1;
+    bytes backgroundImage = 2;
+    string position = 3;
+    int32  resizeX = 4;
+    int32  resizeY = 5;
+    string tkn = 6;
+}
+
+message OverlayResponse {
+    string link = 1;
+}
 
 service ImageService {
     rpc NewImageResize (NewImageRequest) returns (NewImageResponse);
