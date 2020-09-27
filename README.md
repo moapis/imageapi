@@ -16,6 +16,12 @@ For more information regarding Google's gRPC protocol please visit: https://grpc
 
 Envoy docs: https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_protocols/grpc
 
+To regenerate the Go code from image_api.proto file please consult:
+https://grpc.io/docs/languages/go/basics/#generating-client-and-server-code
+
+To generate web gRPC client Javascript code please refer to:
+https://grpc.io/blog/grpc-web-ga/
+
 -----------------------------------------------------------------------------------------------------------------------------
 
 
