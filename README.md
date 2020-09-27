@@ -2,7 +2,7 @@
 
 Image API is a microservice service that integrates and is reliant on https://github.com/moapis/authenticator for validating the tokens that it receives from the client and it is a specialized service that handles image processing and storage to S3 compatible storages directly from buffer without writing to disk. 
 It interacts with a PostgreSQL database for storing relevant information. 
-It can handle not only single/batch upload and image storage but also image resizing and overlaying one image over another thus achieving watermark effect. 
+It can handle not only single/batch upload and image storage but also image resizing and overlaying one image over another and can also store mp4 videos. 
 - This is a RESTful API that is meant to run as a microservice in Docker along with Authenticator and Shop.
 - Client requests are made to this API using Web gRPC protocol and require Envoy proxy to translate the request into native gRPC.
 
