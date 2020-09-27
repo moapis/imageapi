@@ -6,6 +6,8 @@ It can handle not only single/batch upload and image storage but also image resi
 - This is a RESTful API that is meant to run as a microservice in Docker along with Authenticator and Shop.
 - Client requests are made to this API using Web gRPC protocol and require Envoy proxy to translate the request into native gRPC.
 
+Accepted mime types: image/jpg, image/jpeg, image/png, image/gif, image/bmp, video/mp4
+
 It uses https://github.com/minio/minio-go client library for interacting with S3.
 
 It also uses https://github.com/anthonynsimon/bild for some of the image manipulation.
