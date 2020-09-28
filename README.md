@@ -8,6 +8,66 @@ It can handle not only single/batch upload and image storage but also image resi
 
 Accepted mime types: image/jpg, image/jpeg, image/png, image/gif, image/bmp, video/mp4
 
+```
+message ImageDimensions {
+    uint32 width = 1;
+    uint32 height = 2;
+    uint32 alpha = 3;
+}
+
+message NewImageRequest {
+    repeated bytes image = 1;
+    ImageDimensions dimensions = 2; 
+    string tkn = 3;
+}
+
+message NewImageResponse {
+    repeated string link = 1;
+    repeated NewImageResponseStruct Structure = 2;
+}
+
+message RemoveImageRequest {
+    repeated string link = 1;
+    string tkn = 2;
+}
+
+message RemoveImageResponse {
+    string status = 1;
+}
+
+message NewImageResponseStruct {
+    string originalLink = 1;
+    string resizedLink = 2;
+    uint32 originalID = 3;
+    uint32 resizedID = 4;
+}
+
+// Valid positions for OverlayRequest are: "bottomright", "bottomleft", "topright", "center"
+message OverlayRequest {
+    bytes overlayImage = 1;
+    bytes backgroundImage = 2;
+    string position = 3;
+    int32  resizeX = 4;
+    int32  resizeY = 5;
+    string tkn = 6;
+}
+
+message OverlayResponse {
+    string link = 1;
+}
+
+service ImageService {
+    rpc NewImageResize (NewImageRequest) returns (NewImageResponse);
+    rpc NewImagePreserve (NewImageRequest) returns (NewImageResponse); 
+    rpc NewImageResizeAndPreserve (NewImageRequest) returns (NewImageResponse);
+    rpc NewImageResizeAtDimensions (NewImageRequest) returns (NewImageResponse);
+    rpc RemoveImage(RemoveImageRequest) returns (RemoveImageResponse);
+    rpc Overlay(OverlayRequest) returns (OverlayResponse);
+}
+```
+
+--------------------------------------------------------------------------------------
+
 It uses https://github.com/minio/minio-go client library for interacting with S3.
 
 It also uses https://github.com/anthonynsimon/bild for some of the image manipulation.
